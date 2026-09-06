@@ -326,12 +326,27 @@ export class CatalogClientService {
 
   private authOptions(authorization?: string) {
     const headers: Record<string, string> = {};
-    if (authorization) headers.Authorization = authorization;
 
-    const internalToken = process.env.CATALOG_INTERNAL_SERVICE_TOKEN || process.env.INTERNAL_SERVICE_TOKEN;
-    if (internalToken) {
-      headers['x-internal-service-token'] = internalToken;
-      headers['x-service-name'] = 'bazos-service';
+    // A caller-supplied user token wins: routes like /api/catalog/access/provision
+    // resolve per-user settings and reject a service principal outright
+    // (CatalogAccessService.requireHumanUser -> 403), so the human identity must
+    // not be replaced by the service one.
+    if (authorization) {
+      headers.Authorization = authorization;
+      return { headers };
+    }
+
+    // Otherwise this is a service-to-service call and uses the per-pair
+    // principal for bazos-service -> catalog-microservice. No fallback to the
+    // former CATALOG_INTERNAL_SERVICE_TOKEN / INTERNAL_SERVICE_TOKEN: that was
+    // one shared static secret held by seven services, paired with a
+    // self-asserted x-service-name header -- the shape
+    // SERVICE_IDENTITY_CONSUMER_STANDARD.md prohibits. Falling back to it would
+    // silently restore the prohibited path, and because catalog still accepts it
+    // the regression would authenticate successfully and be invisible.
+    const serviceToken = process.env.CATALOG_SERVICE_TOKEN;
+    if (serviceToken) {
+      headers.Authorization = `Bearer ${serviceToken}`;
     }
 
     return Object.keys(headers).length ? { headers } : undefined;
